@@ -1,0 +1,80 @@
+preset: strict
+default_action: block
+secrets:
+  high_entropy:
+    enabled: true
+    min_length: 32
+    min_entropy: 4.5
+rules:
+  - name: allow-read-commands
+    description: Allow common read-only commands
+    decision: allow
+    severity: info
+    match:
+      executables: ["ls", "cat", "head", "tail", "less", "more", "find", "grep", "awk", "sed", "wc", "sort", "uniq", "diff", "file", "stat", "pwd", "echo", "printf", "date", "which", "whereis", "man"]
+  - name: allow-git-read
+    description: Allow read-only git commands
+    decision: allow
+    severity: info
+    match:
+      executables: ["git"]
+      args_contain: ["status", "log", "diff", "show", "branch", "remote", "tag", "stash list"]
+  - name: warn-git-write
+    description: Warn before git history or remote changes
+    decision: warn
+    severity: warn
+    match:
+      executables: ["git"]
+      args_contain: ["push", "commit", "merge", "rebase", "reset", "checkout", "pull"]
+  - name: allow-build-tools
+    description: Allow common build tools
+    decision: allow
+    severity: info
+    match:
+      executables: ["go", "cargo", "npm", "yarn", "pnpm", "pip", "make", "cmake", "python", "node", "ruby", "rustc", "gcc", "javac"]
+  - name: warn-package-install
+    description: Warn before package installation
+    decision: warn
+    severity: warn
+    match:
+      executables: ["npm", "yarn", "pnpm", "pip", "cargo", "go", "brew", "apt", "apt-get"]
+      args_contain: ["install", "add", "get"]
+  - name: block-dangerous-rm
+    description: Recursive force delete detected
+    decision: block
+    severity: critical
+    match:
+      executables: ["rm"]
+      args_contain: ["-rf", "-fr", "--recursive --force"]
+  - name: block-pipe-to-shell
+    description: Piping network content to shell is blocked
+    decision: block
+    severity: critical
+    match:
+      raw_regex: ["\\|\\s*(bash|sh|zsh)", "curl.*\\|", "wget.*\\|"]
+  - name: block-sudo
+    description: sudo is blocked in strict preset
+    decision: block
+    severity: critical
+    match:
+      executables: ["sudo"]
+  - name: block-network-tools
+    description: Network tools are blocked in strict preset
+    decision: block
+    severity: critical
+    match:
+      executables: ["curl", "wget", "nc", "ncat", "netcat", "ssh", "scp", "rsync", "ftp", "sftp", "telnet"]
+  - name: block-docker-destructive
+    description: Destructive Docker operation detected
+    decision: block
+    severity: critical
+    match:
+      executables: ["docker"]
+      args_contain: ["rm", "rmi", "prune", "system prune", "kill", "stop"]
+  - name: block-destructive-infra
+    description: Destructive infrastructure operation detected
+    decision: block
+    severity: critical
+    match:
+      executables: ["terraform", "kubectl", "aws", "gcloud", "az"]
+      args_contain: ["destroy", "delete", "remove", "drop", "terminate", "deregister"]

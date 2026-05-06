@@ -1,0 +1,8 @@
+rules:
+  - name: "block-k8s-delete"
+    description: "Block Kubernetes resource deletion"
+    decision: block
+    severity: critical
+    match:
+      executables: ["kubectl"]
+      args_contain: ["delete"]

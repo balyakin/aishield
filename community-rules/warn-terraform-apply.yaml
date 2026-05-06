@@ -1,0 +1,8 @@
+rules:
+  - name: "warn-terraform-apply"
+    description: "Warn before Terraform apply"
+    decision: warn
+    severity: warn
+    match:
+      executables: ["terraform"]
+      args_contain: ["apply"]

@@ -1,0 +1,8 @@
+.DS_Store
+.idea/
+aishield-spec.md
+aishield
+aishield.log
+coverage.out
+dist/
+*.test

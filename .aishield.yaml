@@ -1,0 +1,113 @@
+# aishield example configuration
+preset: standard
+default_action: allow
+warn_action_non_interactive: block
+disabled_rules: []
+work_dir: "."
+
+filesystem:
+  read_only:
+    - "/etc/*"
+    - "~/.ssh/*"
+    - "~/.gnupg/*"
+    - "~/.config/*"
+  blocked:
+    - "/System/*"
+    - "/boot/*"
+  secret_files:
+    - ".env"
+    - ".env.*"
+    - "*.pem"
+    - "*.key"
+    - "id_rsa"
+    - "id_ed25519"
+    - "~/.ssh/**"
+    - "~/.aws/credentials"
+    - "~/.config/gcloud/**"
+    - "~/.docker/config.json"
+    - ".npmrc"
+    - ".pypirc"
+
+enforcement:
+  pty: true
+  path_shim: true
+  shell_wrapper: true
+  shim_executables:
+    - rm
+    - curl
+    - wget
+    - bash
+    - sh
+    - zsh
+    - git
+    - kubectl
+    - terraform
+    - aws
+    - gcloud
+    - az
+    - docker
+    - ssh
+    - scp
+    - rsync
+    - npm
+    - pnpm
+    - yarn
+    - pip
+    - brew
+
+rules:
+  - name: "block-production-db"
+    description: "Block commands that mention production database deletion"
+    decision: block
+    severity: critical
+    match:
+      raw_regex:
+        - "(?i)prod.*drop"
+        - "(?i)prod.*delete"
+        - "(?i)prod.*destroy"
+
+secrets:
+  enabled: true
+  high_entropy:
+    enabled: false
+    min_length: 32
+    min_entropy: 4.5
+  custom_patterns:
+    - name: "railway-token"
+      regex: "railway_[a-f0-9]{32}"
+      replace: "[MASKED:railway-token]"
+  mask_strings: []
+
+logging:
+  file: "aishield.log"
+  log_output: false
+  log_stdin: false
+
+notifications:
+  enabled: false
+  slack:
+    webhook_url: ""
+    on_blocked: true
+    on_warned: false
+    on_secret_masked: true
+  webhook:
+    url: ""
+    on_blocked: true
+    on_warned: true
+
+environment:
+  allow_list: []
+  block_list:
+    - "DATABASE_URL"
+    - "AWS_SECRET_ACCESS_KEY"
+    - "AWS_ACCESS_KEY_ID"
+    - "GITHUB_TOKEN"
+    - "NPM_TOKEN"
+    - "DOCKER_PASSWORD"
+    - "RAILWAY_TOKEN"
+    - "VERCEL_TOKEN"
+  redact_list: []
+
+incident_mode:
+  enabled: false
+  once_per_day: true

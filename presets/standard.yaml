@@ -1,0 +1,104 @@
+preset: standard
+default_action: allow
+rules:
+  - name: block-pipe-to-shell
+    description: Piping network content to shell is blocked
+    decision: block
+    severity: critical
+    match:
+      raw_regex: ["\\|\\s*(bash|sh|zsh)", "curl.*\\|.*sh", "wget.*\\|.*sh"]
+  - name: block-dangerous-rm
+    description: Recursive force delete detected
+    decision: block
+    severity: critical
+    match:
+      executables: ["rm"]
+      args_regex: ["-[a-z]*r[a-z]*f|--recursive.*--force|--force.*--recursive"]
+  - name: block-destructive-infra
+    description: Destructive infrastructure operation detected
+    decision: block
+    severity: critical
+    match:
+      executables: ["terraform", "kubectl", "aws", "gcloud", "az", "railway"]
+      args_contain: ["destroy", "delete", "remove", "drop", "terminate"]
+  - name: warn-sudo
+    description: sudo requires confirmation
+    decision: warn
+    severity: warn
+    match:
+      executables: ["sudo"]
+  - name: warn-network-requests
+    description: Outbound network request detected
+    decision: warn
+    severity: warn
+    match:
+      executables: ["curl", "wget"]
+  - name: warn-docker-destructive
+    description: Destructive Docker operation detected
+    decision: warn
+    severity: warn
+    match:
+      executables: ["docker"]
+      args_contain: ["rm", "rmi", "prune", "kill"]
+  - name: warn-git-push
+    description: Git push requires confirmation
+    decision: warn
+    severity: warn
+    match:
+      executables: ["git"]
+      args_contain: ["push", "push --force", "push -f"]
+  - name: warn-chmod-777
+    description: chmod 777 requires confirmation
+    decision: warn
+    severity: warn
+    match:
+      executables: ["chmod"]
+      args_contain: ["777"]
+  - name: warn-dd
+    description: dd requires confirmation
+    decision: warn
+    severity: warn
+    match:
+      executables: ["dd"]
+  - name: block-system-paths
+    description: System paths are protected
+    decision: block
+    severity: critical
+    match:
+      file_paths:
+        - pattern: "/etc/**"
+          action: write
+        - pattern: "/System/**"
+          action: any
+        - pattern: "/boot/**"
+          action: any
+  - name: block-secret-files
+    description: Secret file access is blocked
+    decision: block
+    severity: critical
+    match:
+      file_paths:
+        - pattern: ".env"
+          action: any
+        - pattern: ".env.*"
+          action: any
+        - pattern: "*.pem"
+          action: any
+        - pattern: "*.key"
+          action: any
+        - pattern: "id_rsa"
+          action: any
+        - pattern: "id_ed25519"
+          action: any
+        - pattern: "~/.ssh/**"
+          action: any
+        - pattern: "~/.aws/credentials"
+          action: any
+        - pattern: "~/.config/gcloud/**"
+          action: any
+        - pattern: "~/.docker/config.json"
+          action: any
+        - pattern: ".npmrc"
+          action: any
+        - pattern: ".pypirc"
+          action: any

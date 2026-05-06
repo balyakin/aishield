@@ -1,0 +1,17 @@
+preset: permissive
+default_action: allow
+rules:
+  - name: block-pipe-to-shell
+    decision: block
+    match:
+      raw_regex: ["curl.*\\|\\s*(bash|sh|zsh)", "wget.*\\|\\s*(bash|sh|zsh)"]
+  - name: warn-dangerous-rm
+    decision: warn
+    match:
+      executables: ["rm"]
+      args_regex: ["-[a-z]*r[a-z]*f"]
+  - name: warn-destructive-infra
+    decision: warn
+    match:
+      executables: ["terraform", "kubectl", "aws"]
+      args_contain: ["destroy", "delete", "drop"]
