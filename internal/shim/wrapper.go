@@ -24,6 +24,7 @@ type Evaluation struct {
 	Allowed bool
 	Code    int
 	Config  config.Config
+	TraceID string
 }
 
 func Run(target string, args []string) error {
@@ -34,7 +35,7 @@ func Run(target string, args []string) error {
 	_ = LogEvaluation("shim", target, evaluation)
 	if !evaluation.Allowed {
 		_ = notifyDenied(target, evaluation)
-		fmt.Fprintf(os.Stderr, "[aishield] BLOCKED: %s\n", evaluation.Command.Raw)
+		fmt.Fprintf(os.Stderr, "[aishield] BLOCKED: %s\n", Masked(evaluation.Config, evaluation.Command.Raw))
 		fmt.Fprintf(os.Stderr, "Rule: %s\nReason: %s\n", evaluation.Result.Rule, evaluation.Result.Reason)
 		return exitcode.New(evaluation.Code, "")
 	}
@@ -68,8 +69,20 @@ func Evaluate(target string, args []string) (Evaluation, error) {
 	if err != nil {
 		return Evaluation{}, err
 	}
+	protector, err := config.NewDataProtector(loadedConfig)
+	if err != nil {
+		return Evaluation{}, err
+	}
+	protectionResult := protector.ProtectString(command.Raw)
+	policyContext := policy.PolicyContext{PIIFindings: make([]policy.PIIFinding, 0, len(protectionResult.PIIFindings))}
+	for _, finding := range protectionResult.PIIFindings {
+		policyContext.PIIFindings = append(policyContext.PIIFindings, policy.PIIFinding{
+			Type:       finding.Type,
+			Confidence: finding.Confidence,
+		})
+	}
 
-	result := engine.Evaluate(command)
+	result := engine.EvaluateWithContext(command, policyContext)
 	if os.Getenv(EnvDryRun) == "true" {
 		result.Decision = policy.Allow
 	}
@@ -81,18 +94,19 @@ func Evaluate(target string, args []string) (Evaluation, error) {
 		Allowed: allowed,
 		Code:    code,
 		Config:  loadedConfig,
+		TraceID: logger.NewTraceID(),
 	}, nil
 }
 
 func LogEvaluation(backend string, agent string, evaluation Evaluation) error {
-	masker, err := config.NewMasker(evaluation.Config)
+	protector, err := config.NewDataProtector(evaluation.Config)
 	if err != nil {
 		return err
 	}
 
-	auditLogger, err := logger.NewWithSession(
+	auditLogger, err := logger.NewProtectedWithSession(
 		evaluation.Config.Logging.File,
-		masker,
+		protector,
 		agent,
 		evaluation.Config.WorkDir,
 		os.Getenv(EnvSessionID),
@@ -108,12 +122,13 @@ func LogEvaluation(backend string, agent string, evaluation Evaluation) error {
 	if err := auditLogger.Log(logger.Event{
 		Backend:   backend,
 		Type:      "command",
+		TraceID:   evaluation.TraceID,
 		RawMasked: evaluation.Command.Raw,
 		Parsed:    &parsedCommand,
 	}); err != nil {
 		return err
 	}
-	return auditLogger.LogDecision(backend, evaluation.Command, evaluation.Result)
+	return auditLogger.LogDecisionWithTrace(backend, evaluation.Command, evaluation.Result, evaluation.TraceID)
 }
 
 func notifyDenied(target string, evaluation Evaluation) error {
@@ -122,13 +137,21 @@ func notifyDenied(target string, evaluation Evaluation) error {
 	}
 	return notifier.New(evaluation.Config.Notifications).Notify(context.Background(), notifier.Event{
 		EventType:        notifier.EventBlocked,
-		Command:          evaluation.Command.Raw,
+		Command:          Masked(evaluation.Config, evaluation.Command.Raw),
 		Rule:             evaluation.Result.Rule,
-		Reason:           evaluation.Result.Reason,
+		Reason:           Masked(evaluation.Config, evaluation.Result.Reason),
 		Agent:            target,
 		Severity:         evaluation.Result.Severity,
 		WorkingDirectory: evaluation.Config.WorkDir,
 	})
+}
+
+func Masked(loadedConfig config.Config, value string) string {
+	protector, err := config.NewDataProtector(loadedConfig)
+	if err != nil {
+		return value
+	}
+	return protector.ProtectString(value).Value
 }
 
 func NotifyDeniedForShell(evaluation Evaluation) error {

@@ -17,14 +17,15 @@ type ParsedCommand struct {
 }
 
 var knownExecutables = map[string]bool{
-	"apt": true, "apt-get": true, "aws": true, "az": true, "awk": true, "bash": true, "brew": true,
+	"anthropic": true,
+	"apt":       true, "apt-get": true, "aws": true, "az": true, "awk": true, "bash": true, "brew": true,
 	"cargo": true, "cat": true, "chmod": true, "chown": true, "cmake": true, "command": true,
 	"cp": true, "curl": true, "date": true, "dd": true, "diff": true, "docker": true, "echo": true,
-	"file": true, "find": true, "ftp": true, "gcc": true, "gcloud": true, "git": true, "go": true,
+	"file": true, "find": true, "ftp": true, "gcc": true, "gcloud": true, "gh": true, "git": true, "go": true,
 	"grep": true, "head": true, "iptables": true, "javac": true, "kill": true, "kubectl": true,
 	"less": true, "ls": true, "make": true, "man": true, "mkdir": true, "mkfs": true, "more": true,
 	"mount": true, "mv": true, "nc": true, "ncat": true, "netcat": true, "node": true, "npm": true,
-	"pnpm": true, "pip": true, "pkill": true, "printf": true, "pwd": true, "python": true, "python3": true,
+	"openai": true, "pnpm": true, "pip": true, "pkill": true, "printf": true, "pwd": true, "python": true, "python3": true,
 	"railway": true, "rm": true, "rmdir": true, "rsync": true, "ruby": true, "rustc": true, "scp": true,
 	"sed": true, "sh": true, "sort": true, "ssh": true, "stat": true, "sudo": true, "systemctl": true,
 	"tail": true, "tee": true, "telnet": true, "terraform": true, "umount": true, "uniq": true,

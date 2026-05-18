@@ -1,95 +1,167 @@
 # aishield
 
-**A local safety layer for AI coding agents: block dangerous commands, hide secrets, filter environment variables, and keep an audit trail.**
+`aishield` is a local safety layer for AI coding agents.
 
-![aishield CLI screenshot](./assets/screenshot.png)
+It sits between an agent and your terminal, checks commands before they run, masks secrets and PII before they land in
+terminal output or audit logs, and leaves a JSONL trail you can inspect later.
+
+![aishield dashboard screenshot](./assets/screenshot.png)
 
 [![CI](https://github.com/balyakin/aishield/actions/workflows/ci.yaml/badge.svg)](https://github.com/balyakin/aishield/actions/workflows/ci.yaml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/balyakin/aishield)](https://goreportcard.com/report/github.com/balyakin/aishield)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/balyakin/aishield?style=social)](https://github.com/balyakin/aishield)
 
-`aishield` wraps terminal-first AI agents such as Claude Code, Cursor, Codex, Aider, OpenCode, or a plain shell.
-It applies deterministic local policies before risky commands run, masks secrets in terminal output and logs, filters
-dangerous environment variables, and writes a JSONL audit trail.
+## Why this exists
 
-![aishield demo](./assets/demo.gif)
+AI coding agents are useful because they can use the same tools you use. That is also the uncomfortable part.
 
-## Why aishield?
+If an agent runs as your user, it can delete files, call cloud CLIs, read `.env`, push to a remote, print customer data,
+or pipe a remote installer into `sh`. Most of those mistakes are not exotic security research. They are ordinary terminal
+mistakes, just made faster.
 
-AI coding agents run with your terminal permissions. They can delete local files, call cloud CLIs, read `.env` files,
-or push changes with the same access you have. `aishield` is a practical defense-in-depth layer for accidental
-agent mistakes and overly autonomous workflows.
+`aishield` is built for that gap. It gives terminal-first agents a local, deterministic guardrail without asking you to
+send commands or logs to another service.
 
-## How It Works
+## What it does
 
-- Blocks destructive commands such as `rm -rf`, `terraform destroy`, `kubectl delete`, and pipe-to-shell patterns.
-- Warns before risky operations such as `sudo`, outbound `curl`/`wget`, `git push`, and destructive Docker commands.
-- Masks secrets in output and JSONL logs: AWS keys, GitHub tokens, API keys, JWTs, private keys, and connection strings.
-- Filters environment variables before the child process starts.
-- Uses PTY interception, PATH shims, shell wrapper enforcement, and structured audit logs.
-- Includes `aishield test`, `aishield validate`, `aishield demo`, `aishield stats`, `aishield badge`, and local community rules.
+- Blocks known-dangerous commands such as recursive force deletes, destructive infrastructure commands, and pipe-to-shell
+  patterns.
+- Warns before risky but sometimes legitimate actions: `sudo`, outbound `curl`/`wget`, `git push`, destructive Docker
+  commands, and similar operations.
+- Masks secrets and PII in terminal output and JSONL logs.
+- Filters dangerous environment variables before the child process starts.
+- Intercepts commands through PTY handling, PATH shims, and shell wrapper enforcement.
+- Writes structured audit events with decisions, matched rules, trace IDs, PII counts, secret counts, and minimized
+  metadata.
+- Serves a local dashboard for audit review, filtering, and CSV export.
 
-## Security Model
+## Install
 
-`aishield` is defense-in-depth, not a kernel-level sandbox. It reduces risk from accidental AI-agent mistakes through
-PTY interception, PATH shims, shell wrapper enforcement, environment filtering, secret masking, and audit logs.
-It does not replace containers, VMs, Unix permissions, IAM, secret managers, or native OS sandboxing.
-
-If an AI agent reads a secret file internally and sends it directly to its provider, terminal output masking cannot
-guarantee provider-side redaction. Use `aishield` together with least-privilege credentials and proper access controls.
-
-## Compatibility Matrix
-
-| Agent/tool | PTY mode | PATH shim | Env filter | Status |
-|---|---:|---:|---:|---|
-| Claude Code | yes | yes | yes | needs external smoke test |
-| Cursor CLI | yes | yes | yes | needs external smoke test |
-| Codex | yes | yes | yes | needs external smoke test |
-| Aider | yes | yes | yes | needs external smoke test |
-| OpenCode | yes | yes | yes | needs external smoke test |
-| Plain bash/zsh | yes | yes | yes | baseline |
-
-## Quick Start
+`aishield` is a Go CLI. Go 1.22 or newer is expected.
 
 ```bash
 go install github.com/balyakin/aishield/cmd/aishield@latest
-
-aishield run -- bash
-aishield run --preset strict -- codex
-aishield init
-aishield test -- rm -rf /tmp/test
-aishield validate
-aishield demo
 ```
 
-## CLI
+From a checkout:
 
 ```bash
-aishield run -- claude-code
-aishield test --preset strict -- curl https://example.com
-aishield validate --print-effective-config
-aishield log --type decision
+go run ./cmd/aishield demo
+go test ./...
+```
+
+## First run
+
+Create a config, run a protected shell or agent, and test a command before you trust it:
+
+```bash
+aishield init
+aishield run -- bash
+aishield run --preset strict -- codex
+aishield test -- terraform destroy
+```
+
+The `test` command evaluates a command against the active policy without executing it:
+
+```text
+BLOCKED by rule: block-destructive-infra
+Reason: Destructive infrastructure operation detected
+Matched rules: block-destructive-infra
+```
+
+## Common commands
+
+```bash
+# Wrap a terminal-first agent or any local command.
+aishield run -- codex
+aishield run -- aider
+aishield run -- your-agent-command
+
+# Try stricter defaults for production-adjacent work.
+aishield run --preset strict -- bash
+
+# Check one command without running it.
+aishield test -- rm -rf /tmp/demo
+
+# Mask local text and print structured findings.
+aishield scan --text "Contact jane@example.com" --json
+
+# Inspect recent audit activity in the terminal.
 aishield stats --since 24h
-aishield badge
-aishield doctor
+aishield log --type decision
+
+# Open the local dashboard.
+aishield dashboard --listen 127.0.0.1:17891
+
+# Export only masked audit data.
+aishield export --format csv --from 2026-05-01 --to 2026-05-18 --output audit.csv
+
+# Preview or apply log retention.
+aishield retention preview --days 90
+aishield retention apply --days 90 --archive
 ```
 
 ## Presets
 
-| Preset | Default action | Best for |
+| Preset | Default posture | Use it when |
 |---|---|---|
-| `strict` | block | production-adjacent work |
-| `standard` | allow | daily development |
-| `permissive` | allow | trusted local environments |
+| `strict` | Blocks by default, allows known read/build commands | You are near production data, cloud accounts, or shared infrastructure |
+| `standard` | Allows by default, blocks obvious destructive patterns, warns on risky actions | Daily local development |
+| `permissive` | Keeps masking and logging while reducing command friction | You trust the workspace and mainly want audit/masking |
+
+## Secrets and PII
+
+Masking is enabled by default. `aishield` scans command text, PTY output, and audit-log fields before storing them.
+
+The first built-in PII set covers generic identifiers plus an EU-first group:
+
+- email addresses, international phone numbers, IPv4/IPv6, MAC addresses, credit cards, IBANs;
+- NL BSN, German IBANs, FR NIR, ES DNI/NIE, IT Codice Fiscale, PL PESEL;
+- API keys, JWTs, private keys, database connection strings, GitHub tokens, AWS-style keys, and common custom secret
+  patterns.
+
+PII replacements can be configured as `placeholder`, `fake`, or `hash`. Findings include type, confidence, source,
+replacement, and byte offsets. Original values are not kept in the audit log.
+
+```bash
+aishield scan --text "email=jane@example.com token=sk-ant-api03-EXAMPLE1234567890" --json
+```
+
+## Audit log
+
+Audit data is JSONL. The log is intended to be boring and machine-readable: one event per line, already minimized and
+masked.
+
+Events can include:
+
+- `session_id`, `event_id`, and `trace_id`;
+- command decision, matched rule names, severity, and exit code;
+- masked command or output text;
+- `pii_counts`, `pii_findings`, `secret_counts`;
+- a `data_protection` summary showing that original values were not logged.
+
+Useful queries:
+
+```bash
+aishield log --type decision
+aishield log --pii-type EMAIL
+aishield log --trace-id trc_...
+aishield stats --since 168h
+```
+
+The dashboard reads the same JSONL file. By default it binds to loopback. If you expose it on a non-loopback address,
+configure Basic Auth with `AISHIELD_DASHBOARD_PASSWORD` or `dashboard.password`.
 
 ## Configuration
+
+Run:
 
 ```bash
 aishield init
 ```
 
-Example rule:
+That creates `.aishield.yaml`. A small custom rule looks like this:
 
 ```yaml
 rules:
@@ -101,23 +173,33 @@ rules:
       raw_regex:
         - "(?i)prod.*drop"
         - "(?i)prod.*delete"
+        - "(?i)prod.*destroy"
 ```
 
-## Log Analysis
+PII settings live in the same file:
 
-`aishield` writes JSONL logs. Every event contains `schema_version`, `session_id`, `event_id`, `backend`, `ts`, and `type`.
-Command and decision events include masked command text, decision, matched rule names, severity, and exit code when relevant.
+```yaml
+pii:
+  enabled: true
+  replacement_mode: fake
+  countries: [generic, NL, DE, FR, ES, IT, PL]
+  entity_types: []
+  custom_patterns:
+    - name: EMPLOYEE_ID
+      regex: '\bEMP-\d{5}\b'
+      replacement: 'EMP-00000'
+      context_hints: [employee, staff]
+```
+
+Validate the effective config before relying on it:
 
 ```bash
-aishield log
-aishield log --type decision
-aishield stats
-cat aishield.log | jq '.decision'
+aishield validate --print-effective-config
 ```
 
-## Community Rules
+## Community rules
 
-Community rules live in `community-rules/` and are installed locally through config edits.
+Community rules are plain YAML files under `community-rules/`.
 
 ```bash
 aishield contrib list
@@ -125,14 +207,38 @@ aishield contrib search kubectl
 aishield contrib info block-k8s-delete
 ```
 
-## Releases
+Rules should stay deterministic and explainable. This project deliberately avoids LLM-based policy decisions.
 
-Releases are built with GoReleaser for Linux and macOS on amd64/arm64 and include SHA256 checksums.
-Signed releases and Homebrew tap automation are tracked in [ROADMAP.md](ROADMAP.md).
+## Security model
 
-## Contributing
+`aishield` is defense-in-depth. It is not a kernel sandbox, VM, container runtime, IAM system, or secret manager.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+It can reduce the chance that an agent accidentally runs a dangerous command, leaks secrets through terminal output, or
+leaves raw PII in local logs. It cannot guarantee provider-side redaction if an agent reads sensitive files internally and
+sends their contents over a network path that does not pass through terminal-observable stdin, commands, or output.
+
+Use it with normal security hygiene: least-privilege credentials, project-scoped tokens, separate cloud profiles, careful
+file permissions, and real sandboxing when the workload deserves it.
+
+## Compatibility
+
+The baseline is any command that can run under a local shell. `aishield` is designed for terminal-first tools such as
+Codex, Claude Code, Cursor CLI, Aider, OpenCode, and plain `bash`/`zsh`.
+
+External smoke tests for specific agent releases are tracked in [ROADMAP.md](ROADMAP.md). Until a tool is verified there,
+treat compatibility as expected behavior rather than a guarantee.
+
+## Development
+
+```bash
+go test ./...
+go run ./cmd/aishield demo
+go run ./cmd/aishield dashboard --listen 127.0.0.1:17891
+```
+
+CI runs `gofmt` and `go test ./...`. Releases are built with GoReleaser for Linux and macOS on amd64/arm64.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution notes and [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## License
 

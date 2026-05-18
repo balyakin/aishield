@@ -84,6 +84,21 @@ func renderShareCard(stats logStats, format string) string {
 	)
 }
 
+type topCommand struct {
+	Command string
+	Count   int
+}
+
+func topMapItem(values map[string]int) topCommand {
+	var result topCommand
+	for command, count := range values {
+		if count > result.Count {
+			result = topCommand{Command: command, Count: count}
+		}
+	}
+	return result
+}
+
 func copyToClipboard(value string) error {
 	var command *exec.Cmd
 	switch runtime.GOOS {

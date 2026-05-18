@@ -48,19 +48,19 @@ func newRunCommand() *cobra.Command {
 	runCommand.Flags().StringVarP(&preset, "preset", "p", "standard", "Security preset: strict, standard, permissive")
 	runCommand.Flags().BoolVarP(&dryRun, "dry-run", "d", false, "Log only, do not block anything")
 	runCommand.Flags().StringVarP(&logFile, "log-file", "l", "aishield.log", "Path to log file")
-	runCommand.Flags().BoolVar(&noMask, "no-mask", false, "Disable secret masking")
+	runCommand.Flags().BoolVar(&noMask, "no-mask", false, "Disable secret and PII masking")
 	runCommand.Flags().DurationVar(&confirmTimeout, "confirm-timeout", 30*time.Second, "Timeout for user confirmations")
 	runCommand.Flags().BoolVar(&incident, "incident", false, "Show a verified AI-agent incident at session start")
 	return runCommand
 }
 
 func runProtectedCommand(loadedConfig config.Config, args []string, dryRun bool, confirmTimeout time.Duration) error {
-	masker, err := config.NewMasker(loadedConfig)
+	protector, err := config.NewDataProtector(loadedConfig)
 	if err != nil {
 		return exitcode.New(exitcode.ConfigValidation, err.Error())
 	}
 
-	auditLogger, err := projectlogger.New(loadedConfig.Logging.File, masker, args[0], loadedConfig.WorkDir)
+	auditLogger, err := projectlogger.NewProtected(loadedConfig.Logging.File, protector, args[0], loadedConfig.WorkDir)
 	if err != nil {
 		return exitcode.New(exitcode.RuntimeError, err.Error())
 	}
@@ -102,7 +102,7 @@ func runProtectedCommand(loadedConfig config.Config, args []string, dryRun bool,
 		Env:        processEnv,
 		WorkDir:    loadedConfig.WorkDir,
 		Policy:     engine,
-		Masker:     masker,
+		Protector:  protector,
 		FSGuard:    guard,
 		Logger:     auditLogger,
 		Notifier:   notifier.New(loadedConfig.Notifications),
@@ -125,6 +125,7 @@ func runProtectedCommand(loadedConfig config.Config, args []string, dryRun bool,
 			"warned":         stats.Warned,
 			"blocked":        stats.Blocked,
 			"secrets_masked": stats.SecretsMasked,
+			"pii_masked":     stats.PIIMasked,
 		},
 	})
 
@@ -200,5 +201,6 @@ func printSummary(stats proxy.Stats, duration time.Duration, logFile string) {
 	fmt.Printf("Warned (confirmed): %d\n", stats.Warned)
 	fmt.Printf("Blocked: %d\n", stats.Blocked)
 	fmt.Printf("Secrets masked: %d\n", stats.SecretsMasked)
+	fmt.Printf("PII masked: %d\n", stats.PIIMasked)
 	fmt.Printf("Log: %s\n", logFile)
 }

@@ -23,7 +23,15 @@
 - [ ] Signed releases with cosign.
 - [ ] Issue templates for community rules and verified incidents.
 
-## v0.3 Team Features
+## v0.3 PII Compliance Layer
+
+- [x] Deterministic EU-first PII scanner with checksum validators and context hints.
+- [x] Unified secret and PII masking with schema v2 JSONL audit metadata.
+- [x] PII-aware command policy criteria and default egress rules.
+- [x] Local `scan`, `dashboard`, `export`, and `retention` commands.
+- [x] CSV/JSONL masked audit export and explicit retention compaction.
+
+## v0.4 Team Features
 
 - [ ] Share cards with clipboard support.
 - [ ] Audit heuristics that can suggest project rules.

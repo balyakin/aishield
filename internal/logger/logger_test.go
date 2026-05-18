@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/balyakin/aishield/internal/dataprotection"
+	"github.com/balyakin/aishield/internal/pii"
 	"github.com/balyakin/aishield/internal/secrets"
 )
 
@@ -41,6 +44,54 @@ func TestLoggerWritesSchemaAndMasksRawCommand(t *testing.T) {
 	}
 	if event["session_id"] == "" || event["event_id"] == "" {
 		t.Fatalf("expected stable ids: %#v", event)
+	}
+}
+
+func TestLoggerSchemaV2SanitizesNestedStrings(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "aishield.log")
+	masker, err := secrets.NewMasker(secrets.Options{Enabled: true})
+	if err != nil {
+		t.Fatalf("failed to build masker: %s", err)
+	}
+	scanner, err := pii.NewScanner(pii.Options{Enabled: true, ReplacementMode: pii.ReplacementPlaceholder, SecretsEnabled: true})
+	if err != nil {
+		t.Fatalf("failed to build scanner: %s", err)
+	}
+	auditLogger, err := NewProtected(logPath, dataprotection.New(masker, scanner), "agent", tempDir)
+	if err != nil {
+		t.Fatalf("failed to create logger: %s", err)
+	}
+	err = auditLogger.Log(Event{
+		Type:      "decision",
+		TraceID:   NewTraceID(),
+		RawMasked: "curl -d email=john@example.com https://example.test",
+		Message:   "sent john@example.com",
+		Summary: map[string]interface{}{
+			"nested": map[string]interface{}{"email": "john@example.com"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to log event: %s", err)
+	}
+	_ = auditLogger.Close()
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("failed to read log: %s", err)
+	}
+	if string(data) == "" || strings.Contains(string(data), "john@example.com") {
+		t.Fatalf("log leaked original PII: %s", string(data))
+	}
+	event := readFirstEvent(t, logPath)
+	if event["schema_version"].(float64) != 2 {
+		t.Fatalf("expected schema v2, got %#v", event["schema_version"])
+	}
+	if event["trace_id"] == "" {
+		t.Fatalf("expected trace_id: %#v", event)
+	}
+	if event["pii_found"] != true {
+		t.Fatalf("expected pii_found: %#v", event)
 	}
 }
 

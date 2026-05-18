@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/balyakin/aishield/internal/dataprotection"
 	projectenv "github.com/balyakin/aishield/internal/env"
+	"github.com/balyakin/aishield/internal/pii"
 	"github.com/balyakin/aishield/internal/policy"
 	"github.com/balyakin/aishield/internal/secrets"
 	"gopkg.in/yaml.v3"
@@ -26,6 +28,9 @@ type Config struct {
 	Enforcement              EnforcementConfig   `json:"enforcement" yaml:"enforcement"`
 	Rules                    []policy.Rule       `json:"rules" yaml:"rules"`
 	Secrets                  SecretsConfig       `json:"secrets" yaml:"secrets"`
+	PII                      PIIConfig           `json:"pii" yaml:"pii"`
+	Audit                    AuditConfig         `json:"audit" yaml:"audit"`
+	Dashboard                DashboardConfig     `json:"dashboard" yaml:"dashboard"`
 	Logging                  LoggingConfig       `json:"logging" yaml:"logging"`
 	Notifications            NotificationsConfig `json:"notifications" yaml:"notifications"`
 	Environment              projectenv.Config   `json:"environment" yaml:"environment"`
@@ -58,6 +63,39 @@ type LoggingConfig struct {
 	LogStdin  bool   `json:"log_stdin" yaml:"log_stdin"`
 }
 
+type PIIConfig struct {
+	Enabled                bool                `json:"enabled" yaml:"enabled"`
+	Countries              []string            `json:"countries" yaml:"countries"`
+	EntityTypes            []string            `json:"entity_types" yaml:"entity_types"`
+	ReplacementMode        pii.ReplacementMode `json:"replacement_mode" yaml:"replacement_mode"`
+	ContextWindow          int                 `json:"context_window" yaml:"context_window"`
+	StreamBufferBytes      int                 `json:"stream_buffer_bytes" yaml:"stream_buffer_bytes"`
+	ScanEncoded            bool                `json:"scan_encoded" yaml:"scan_encoded"`
+	EncodedMinLength       int                 `json:"encoded_min_length" yaml:"encoded_min_length"`
+	MaxScanBytes           int                 `json:"max_scan_bytes" yaml:"max_scan_bytes"`
+	MaxStructuredBytes     int                 `json:"max_structured_bytes" yaml:"max_structured_bytes"`
+	EncodedMaxDecodedBytes int                 `json:"encoded_max_decoded_bytes" yaml:"encoded_max_decoded_bytes"`
+	MaxFindingsPerInput    int                 `json:"max_findings_per_input" yaml:"max_findings_per_input"`
+	CustomPatterns         []pii.PatternConfig `json:"custom_patterns" yaml:"custom_patterns"`
+}
+
+type AuditConfig struct {
+	RetentionDays       int                  `json:"retention_days" yaml:"retention_days"`
+	ArchiveBeforeDelete bool                 `json:"archive_before_delete" yaml:"archive_before_delete"`
+	Integrity           AuditIntegrityConfig `json:"integrity" yaml:"integrity"`
+}
+
+type AuditIntegrityConfig struct {
+	Enabled    bool   `json:"enabled" yaml:"enabled"`
+	HMACKeyEnv string `json:"hmac_key_env" yaml:"hmac_key_env"`
+}
+
+type DashboardConfig struct {
+	Listen      string `json:"listen" yaml:"listen"`
+	Password    string `json:"password" yaml:"password"`
+	PasswordEnv string `json:"password_env" yaml:"password_env"`
+}
+
 type NotificationsConfig struct {
 	Enabled bool          `json:"enabled" yaml:"enabled"`
 	Slack   WebhookConfig `json:"slack" yaml:"slack"`
@@ -71,6 +109,8 @@ type WebhookConfig struct {
 	OnBlocked      bool              `json:"on_blocked" yaml:"on_blocked"`
 	OnWarned       bool              `json:"on_warned" yaml:"on_warned"`
 	OnSecretMasked bool              `json:"on_secret_masked" yaml:"on_secret_masked"`
+	OnPIIFound     bool              `json:"on_pii_found" yaml:"on_pii_found"`
+	MinPIICount    int               `json:"min_pii_count" yaml:"min_pii_count"`
 	MinSeverity    string            `json:"min_severity" yaml:"min_severity"`
 }
 
@@ -131,6 +171,7 @@ func Load(options LoadOptions) (Config, error) {
 	}
 	if options.NoMask {
 		config.Secrets.Enabled = false
+		config.PII.Enabled = false
 	}
 
 	absoluteWorkDir, err := filepath.Abs(config.WorkDir)
@@ -167,6 +208,12 @@ func Validate(config Config) error {
 			return fmt.Errorf("secret pattern %q is invalid: %w", pattern.Name, err)
 		}
 	}
+	if _, err := NewPIIScanner(config); err != nil {
+		return err
+	}
+	if config.Audit.RetentionDays < 0 {
+		return errors.New("audit.retention_days must be non-negative")
+	}
 	return nil
 }
 
@@ -177,6 +224,37 @@ func NewMasker(config Config) (*secrets.Masker, error) {
 		CustomPatterns: config.Secrets.CustomPatterns,
 		MaskStrings:    config.Secrets.MaskStrings,
 	})
+}
+
+func NewPIIScanner(config Config) (*pii.Scanner, error) {
+	return pii.NewScanner(pii.Options{
+		Enabled:                config.PII.Enabled,
+		Countries:              config.PII.Countries,
+		EntityTypes:            config.PII.EntityTypes,
+		ReplacementMode:        config.PII.ReplacementMode,
+		ContextWindow:          config.PII.ContextWindow,
+		StreamBufferBytes:      config.PII.StreamBufferBytes,
+		ScanEncoded:            config.PII.ScanEncoded,
+		EncodedMinLength:       config.PII.EncodedMinLength,
+		MaxScanBytes:           config.PII.MaxScanBytes,
+		MaxStructuredBytes:     config.PII.MaxStructuredBytes,
+		EncodedMaxDecodedBytes: config.PII.EncodedMaxDecodedBytes,
+		MaxFindingsPerInput:    config.PII.MaxFindingsPerInput,
+		CustomPatterns:         config.PII.CustomPatterns,
+		SecretsEnabled:         config.Secrets.Enabled,
+	})
+}
+
+func NewDataProtector(config Config) (*dataprotection.Processor, error) {
+	masker, err := NewMasker(config)
+	if err != nil {
+		return nil, err
+	}
+	scanner, err := NewPIIScanner(config)
+	if err != nil {
+		return nil, err
+	}
+	return dataprotection.New(masker, scanner), nil
 }
 
 func Marshal(config Config) ([]byte, error) {

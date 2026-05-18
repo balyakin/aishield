@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/balyakin/aishield/internal/pii"
 	"github.com/balyakin/aishield/internal/policy"
 	"github.com/balyakin/aishield/internal/secrets"
 )
@@ -31,6 +32,36 @@ func Merge(base Config, override Config) Config {
 	if override.Secrets.Enabled {
 		result.Secrets.Enabled = true
 	}
+	if override.PII.Enabled {
+		result.PII.Enabled = true
+	}
+	if override.PII.ReplacementMode != "" {
+		result.PII.ReplacementMode = override.PII.ReplacementMode
+	}
+	if override.PII.ContextWindow != 0 {
+		result.PII.ContextWindow = override.PII.ContextWindow
+	}
+	if override.PII.StreamBufferBytes != 0 {
+		result.PII.StreamBufferBytes = override.PII.StreamBufferBytes
+	}
+	if override.PII.ScanEncoded {
+		result.PII.ScanEncoded = true
+	}
+	if override.PII.EncodedMinLength != 0 {
+		result.PII.EncodedMinLength = override.PII.EncodedMinLength
+	}
+	if override.PII.MaxScanBytes != 0 {
+		result.PII.MaxScanBytes = override.PII.MaxScanBytes
+	}
+	if override.PII.MaxStructuredBytes != 0 {
+		result.PII.MaxStructuredBytes = override.PII.MaxStructuredBytes
+	}
+	if override.PII.EncodedMaxDecodedBytes != 0 {
+		result.PII.EncodedMaxDecodedBytes = override.PII.EncodedMaxDecodedBytes
+	}
+	if override.PII.MaxFindingsPerInput != 0 {
+		result.PII.MaxFindingsPerInput = override.PII.MaxFindingsPerInput
+	}
 	if override.Secrets.HighEntropy.Enabled {
 		result.Secrets.HighEntropy.Enabled = true
 	}
@@ -50,6 +81,30 @@ func Merge(base Config, override Config) Config {
 	result.Rules = mergeRules(result.Rules, override.Rules)
 	result.Secrets.CustomPatterns = mergeSecretPatterns(result.Secrets.CustomPatterns, override.Secrets.CustomPatterns)
 	result.Secrets.MaskStrings = uniqueStrings(append(result.Secrets.MaskStrings, override.Secrets.MaskStrings...))
+	result.PII.Countries = uniqueStrings(append(result.PII.Countries, override.PII.Countries...))
+	result.PII.EntityTypes = uniqueStrings(append(result.PII.EntityTypes, override.PII.EntityTypes...))
+	result.PII.CustomPatterns = mergePIIPatterns(result.PII.CustomPatterns, override.PII.CustomPatterns)
+	if override.Audit.RetentionDays != 0 {
+		result.Audit.RetentionDays = override.Audit.RetentionDays
+	}
+	if override.Audit.ArchiveBeforeDelete {
+		result.Audit.ArchiveBeforeDelete = true
+	}
+	if override.Audit.Integrity.Enabled {
+		result.Audit.Integrity.Enabled = true
+	}
+	if override.Audit.Integrity.HMACKeyEnv != "" {
+		result.Audit.Integrity.HMACKeyEnv = override.Audit.Integrity.HMACKeyEnv
+	}
+	if override.Dashboard.Listen != "" {
+		result.Dashboard.Listen = override.Dashboard.Listen
+	}
+	if override.Dashboard.Password != "" {
+		result.Dashboard.Password = override.Dashboard.Password
+	}
+	if override.Dashboard.PasswordEnv != "" {
+		result.Dashboard.PasswordEnv = override.Dashboard.PasswordEnv
+	}
 	result.Environment.AllowList = uniqueStrings(append(result.Environment.AllowList, override.Environment.AllowList...))
 	result.Environment.BlockList = uniqueStrings(append(result.Environment.BlockList, override.Environment.BlockList...))
 	result.Environment.RedactList = uniqueStrings(append(result.Environment.RedactList, override.Environment.RedactList...))
@@ -93,6 +148,66 @@ func MergePatch(base Config, override Config, present map[string]bool) Config {
 	if present["secrets.high_entropy.min_entropy"] {
 		result.Secrets.HighEntropy.MinEntropy = override.Secrets.HighEntropy.MinEntropy
 	}
+	if present["pii.enabled"] {
+		result.PII.Enabled = override.PII.Enabled
+	}
+	if present["pii.countries"] {
+		result.PII.Countries = override.PII.Countries
+	}
+	if present["pii.entity_types"] {
+		result.PII.EntityTypes = override.PII.EntityTypes
+	}
+	if present["pii.replacement_mode"] {
+		result.PII.ReplacementMode = override.PII.ReplacementMode
+	}
+	if present["pii.context_window"] {
+		result.PII.ContextWindow = override.PII.ContextWindow
+	}
+	if present["pii.stream_buffer_bytes"] {
+		result.PII.StreamBufferBytes = override.PII.StreamBufferBytes
+	}
+	if present["pii.scan_encoded"] {
+		result.PII.ScanEncoded = override.PII.ScanEncoded
+	}
+	if present["pii.encoded_min_length"] {
+		result.PII.EncodedMinLength = override.PII.EncodedMinLength
+	}
+	if present["pii.max_scan_bytes"] {
+		result.PII.MaxScanBytes = override.PII.MaxScanBytes
+	}
+	if present["pii.max_structured_bytes"] {
+		result.PII.MaxStructuredBytes = override.PII.MaxStructuredBytes
+	}
+	if present["pii.encoded_max_decoded_bytes"] {
+		result.PII.EncodedMaxDecodedBytes = override.PII.EncodedMaxDecodedBytes
+	}
+	if present["pii.max_findings_per_input"] {
+		result.PII.MaxFindingsPerInput = override.PII.MaxFindingsPerInput
+	}
+	if present["pii.custom_patterns"] {
+		result.PII.CustomPatterns = override.PII.CustomPatterns
+	}
+	if present["audit.retention_days"] {
+		result.Audit.RetentionDays = override.Audit.RetentionDays
+	}
+	if present["audit.archive_before_delete"] {
+		result.Audit.ArchiveBeforeDelete = override.Audit.ArchiveBeforeDelete
+	}
+	if present["audit.integrity.enabled"] {
+		result.Audit.Integrity.Enabled = override.Audit.Integrity.Enabled
+	}
+	if present["audit.integrity.hmac_key_env"] {
+		result.Audit.Integrity.HMACKeyEnv = override.Audit.Integrity.HMACKeyEnv
+	}
+	if present["dashboard.listen"] {
+		result.Dashboard.Listen = override.Dashboard.Listen
+	}
+	if present["dashboard.password"] {
+		result.Dashboard.Password = override.Dashboard.Password
+	}
+	if present["dashboard.password_env"] {
+		result.Dashboard.PasswordEnv = override.Dashboard.PasswordEnv
+	}
 	if present["logging.file"] {
 		result.Logging.File = override.Logging.File
 	}
@@ -123,6 +238,12 @@ func MergePatch(base Config, override Config, present map[string]bool) Config {
 	if present["notifications.slack.on_secret_masked"] {
 		result.Notifications.Slack.OnSecretMasked = override.Notifications.Slack.OnSecretMasked
 	}
+	if present["notifications.slack.on_pii_found"] {
+		result.Notifications.Slack.OnPIIFound = override.Notifications.Slack.OnPIIFound
+	}
+	if present["notifications.slack.min_pii_count"] {
+		result.Notifications.Slack.MinPIICount = override.Notifications.Slack.MinPIICount
+	}
 	if present["notifications.slack.min_severity"] {
 		result.Notifications.Slack.MinSeverity = override.Notifications.Slack.MinSeverity
 	}
@@ -146,6 +267,12 @@ func MergePatch(base Config, override Config, present map[string]bool) Config {
 	}
 	if present["notifications.webhook.on_secret_masked"] {
 		result.Notifications.Webhook.OnSecretMasked = override.Notifications.Webhook.OnSecretMasked
+	}
+	if present["notifications.webhook.on_pii_found"] {
+		result.Notifications.Webhook.OnPIIFound = override.Notifications.Webhook.OnPIIFound
+	}
+	if present["notifications.webhook.min_pii_count"] {
+		result.Notifications.Webhook.MinPIICount = override.Notifications.Webhook.MinPIICount
 	}
 	if present["notifications.webhook.min_severity"] {
 		result.Notifications.Webhook.MinSeverity = override.Notifications.Webhook.MinSeverity
@@ -186,6 +313,12 @@ func mergeWebhook(base WebhookConfig, override WebhookConfig) WebhookConfig {
 	}
 	if override.OnSecretMasked {
 		result.OnSecretMasked = true
+	}
+	if override.OnPIIFound {
+		result.OnPIIFound = true
+	}
+	if override.MinPIICount != 0 {
+		result.MinPIICount = override.MinPIICount
 	}
 	if override.MinSeverity != "" {
 		result.MinSeverity = override.MinSeverity
@@ -235,6 +368,31 @@ func mergeRules(base []policy.Rule, override []policy.Rule) []policy.Rule {
 
 func mergeSecretPatterns(base []secrets.PatternConfig, override []secrets.PatternConfig) []secrets.PatternConfig {
 	result := append([]secrets.PatternConfig{}, base...)
+	indexByName := make(map[string]int)
+	for index, pattern := range result {
+		if pattern.Name != "" {
+			indexByName[pattern.Name] = index
+		}
+	}
+
+	for _, pattern := range override {
+		if pattern.Name == "" {
+			result = append(result, pattern)
+			continue
+		}
+		index, ok := indexByName[pattern.Name]
+		if ok {
+			result[index] = pattern
+			continue
+		}
+		indexByName[pattern.Name] = len(result)
+		result = append(result, pattern)
+	}
+	return result
+}
+
+func mergePIIPatterns(base []pii.PatternConfig, override []pii.PatternConfig) []pii.PatternConfig {
+	result := append([]pii.PatternConfig{}, base...)
 	indexByName := make(map[string]int)
 	for index, pattern := range result {
 		if pattern.Name != "" {

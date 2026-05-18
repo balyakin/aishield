@@ -73,6 +73,30 @@ func TestStrictPresetEnablesHighEntropy(t *testing.T) {
 	}
 }
 
+func TestPIIDefaultsAndNoMask(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	loadedConfig, err := Load(LoadOptions{})
+	if err != nil {
+		t.Fatalf("expected valid config: %s", err)
+	}
+	if !loadedConfig.PII.Enabled {
+		t.Fatal("expected PII scanning enabled by default")
+	}
+	if loadedConfig.PII.ReplacementMode != "fake" {
+		t.Fatalf("unexpected replacement mode: %s", loadedConfig.PII.ReplacementMode)
+	}
+
+	noMaskConfig, err := Load(LoadOptions{NoMask: true})
+	if err != nil {
+		t.Fatalf("expected valid no-mask config: %s", err)
+	}
+	if noMaskConfig.Secrets.Enabled || noMaskConfig.PII.Enabled {
+		t.Fatalf("--no-mask must disable secrets and PII: %#v", noMaskConfig)
+	}
+}
+
 func TestNotificationsLoadedFromConfig(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("HOME", tempDir)
@@ -85,6 +109,8 @@ notifications:
     on_blocked: true
     on_warned: true
     on_secret_masked: true
+    on_pii_found: true
+    min_pii_count: 2
     min_severity: warn
   webhook:
     url: "https://hooks.example/generic"
@@ -111,6 +137,9 @@ notifications:
 	if !loadedConfig.Notifications.Slack.OnWarned {
 		t.Fatal("expected slack warned events enabled")
 	}
+	if !loadedConfig.Notifications.Slack.OnPIIFound || loadedConfig.Notifications.Slack.MinPIICount != 2 {
+		t.Fatalf("unexpected PII notification config: %#v", loadedConfig.Notifications.Slack)
+	}
 	if loadedConfig.Notifications.Webhook.Headers["Authorization"] != "Bearer token" {
 		t.Fatalf("unexpected webhook headers: %#v", loadedConfig.Notifications.Webhook.Headers)
 	}
@@ -126,10 +155,10 @@ func TestEmbeddedPresetMatchesPolicyRules(t *testing.T) {
 		t.Fatalf("failed to load standard preset: %s", err)
 	}
 
-	if len(strictConfig.Rules) != 11 {
+	if len(strictConfig.Rules) != 12 {
 		t.Fatalf("unexpected strict rule count: %d", len(strictConfig.Rules))
 	}
-	if len(standardConfig.Rules) != 11 {
+	if len(standardConfig.Rules) != 12 {
 		t.Fatalf("unexpected standard rule count: %d", len(standardConfig.Rules))
 	}
 }

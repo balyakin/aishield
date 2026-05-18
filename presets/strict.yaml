@@ -64,6 +64,15 @@ rules:
     severity: critical
     match:
       executables: ["curl", "wget", "nc", "ncat", "netcat", "ssh", "scp", "rsync", "ftp", "sftp", "telnet"]
+  - name: block-pii-network-egress
+    description: Block commands that include PII and send data to network tools
+    decision: block
+    severity: critical
+    priority: 80
+    match:
+      network_egress: true
+      min_pii_count: 1
+      min_pii_confidence: medium
   - name: block-docker-destructive
     description: Destructive Docker operation detected
     decision: block

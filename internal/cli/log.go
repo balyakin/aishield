@@ -1,14 +1,13 @@
 package cli
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/balyakin/aishield/internal/auditlog"
 	"github.com/balyakin/aishield/internal/exitcode"
 )
 
@@ -16,59 +15,46 @@ func newLogCommand() *cobra.Command {
 	var logFile string
 	var eventType string
 	var since time.Duration
+	var traceID string
+	var sessionID string
+	var piiType string
+	var minPIIConfidence string
 
 	logCommand := &cobra.Command{
 		Use:   "log",
 		Short: "View and filter the aishield log file",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			file, err := os.Open(logFile)
+			filter := auditlog.Filter{
+				Type:             eventType,
+				TraceID:          traceID,
+				SessionID:        sessionID,
+				PIIType:          piiType,
+				MinPIIConfidence: minPIIConfidence,
+			}
+			if since > 0 {
+				filter.From = time.Now().UTC().Add(-since)
+			}
+			result, err := auditlog.List(logFile, filter, auditlog.Page{Page: 1, PerPage: 500})
 			if err != nil {
 				return exitcode.New(exitcode.RuntimeError, err.Error())
 			}
-			defer func() {
-				_ = file.Close()
-			}()
-
-			cutoff := time.Time{}
-			if since > 0 {
-				cutoff = time.Now().UTC().Add(-since)
-			}
-
-			scanner := bufio.NewScanner(file)
-			for scanner.Scan() {
-				line := scanner.Text()
-				if shouldPrintLogLine(line, eventType, cutoff) {
-					fmt.Println(line)
+			for _, event := range result.Items {
+				data, err := json.Marshal(event)
+				if err != nil {
+					return exitcode.New(exitcode.RuntimeError, err.Error())
 				}
+				fmt.Println(string(data))
 			}
-			return scanner.Err()
+			return nil
 		},
 	}
 
 	logCommand.Flags().StringVarP(&logFile, "log-file", "l", "aishield.log", "Path to log file")
 	logCommand.Flags().StringVarP(&eventType, "type", "t", "", "Filter by event type")
 	logCommand.Flags().DurationVar(&since, "since", 0, "Show events from the last duration")
+	logCommand.Flags().StringVar(&traceID, "trace-id", "", "Filter by trace_id")
+	logCommand.Flags().StringVar(&sessionID, "session-id", "", "Filter by session_id")
+	logCommand.Flags().StringVar(&piiType, "pii-type", "", "Filter by PII entity type")
+	logCommand.Flags().StringVar(&minPIIConfidence, "min-pii-confidence", "", "Filter by minimum PII confidence")
 	return logCommand
-}
-
-func shouldPrintLogLine(line string, eventType string, cutoff time.Time) bool {
-	var event map[string]interface{}
-	if err := json.Unmarshal([]byte(line), &event); err != nil {
-		return false
-	}
-	if eventType != "" && event["type"] != eventType {
-		return false
-	}
-	if cutoff.IsZero() {
-		return true
-	}
-	timestamp, ok := event["ts"].(string)
-	if !ok {
-		return false
-	}
-	parsedTime, err := time.Parse(time.RFC3339Nano, timestamp)
-	if err != nil {
-		return false
-	}
-	return parsedTime.After(cutoff)
 }

@@ -21,13 +21,21 @@ type commandDecision struct {
 }
 
 func loadConfig(cmd *cobra.Command, preset string, logFile string, noMask bool) (config.Config, error) {
+	presetChanged := false
+	if cmd.Flags().Lookup("preset") != nil {
+		presetChanged = cmd.Flags().Changed("preset")
+	}
+	logFileChanged := false
+	if cmd.Flags().Lookup("log-file") != nil {
+		logFileChanged = cmd.Flags().Changed("log-file")
+	}
 	options := config.LoadOptions{
 		Preset:         preset,
-		PresetChanged:  cmd.Flags().Changed("preset"),
+		PresetChanged:  presetChanged,
 		ConfigPath:     configPath,
 		ConfigChanged:  cmd.Root().PersistentFlags().Changed("config"),
 		LogFile:        logFile,
-		LogFileChanged: cmd.Flags().Changed("log-file"),
+		LogFileChanged: logFileChanged,
 		NoMask:         noMask,
 	}
 	return config.Load(options)
@@ -69,10 +77,22 @@ func evaluateCommand(loadedConfig config.Config, raw string) (commandDecision, e
 	if err != nil {
 		return commandDecision{}, err
 	}
+	protector, err := config.NewDataProtector(loadedConfig)
+	if err != nil {
+		return commandDecision{}, err
+	}
+	protectionResult := protector.ProtectString(command.Raw)
+	policyContext := policy.PolicyContext{PIIFindings: make([]policy.PIIFinding, 0, len(protectionResult.PIIFindings))}
+	for _, finding := range protectionResult.PIIFindings {
+		policyContext.PIIFindings = append(policyContext.PIIFindings, policy.PIIFinding{
+			Type:       finding.Type,
+			Confidence: finding.Confidence,
+		})
+	}
 
 	return commandDecision{
 		Command: command,
-		Result:  engine.Evaluate(command),
+		Result:  engine.EvaluateWithContext(command, policyContext),
 	}, nil
 }
 

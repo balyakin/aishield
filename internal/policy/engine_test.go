@@ -60,6 +60,56 @@ func TestRulePriorityAndLoadOrder(t *testing.T) {
 	}
 }
 
+func TestPIINetworkEgressRule(t *testing.T) {
+	networkEgress := true
+	engine := mustEngine(t, []Rule{
+		{
+			Name:     "block-pii-egress",
+			Decision: Block,
+			Match: MatchCriteria{
+				NetworkEgress:    &networkEgress,
+				MinPIICount:      1,
+				MinPIIConfidence: "medium",
+			},
+		},
+	}, Allow)
+
+	result := engine.EvaluateWithContext(parser.Parse("curl -d email=john@example.com https://example.test"), PolicyContext{
+		PIIFindings: []PIIFinding{{Type: "EMAIL", Confidence: "medium"}},
+	})
+	if result.Decision != Block {
+		t.Fatalf("expected block for PII network egress, got %#v", result)
+	}
+
+	low := engine.EvaluateWithContext(parser.Parse("curl -d phone=+12025550123 https://example.test"), PolicyContext{
+		PIIFindings: []PIIFinding{{Type: "PHONE_INTL", Confidence: "low"}},
+	})
+	if low.Decision != Allow {
+		t.Fatalf("low confidence PII should not match medium rule: %#v", low)
+	}
+}
+
+func TestPIIMinConfidenceDefaultsToMedium(t *testing.T) {
+	networkEgress := true
+	engine := mustEngine(t, []Rule{
+		{
+			Name:     "warn-pii-egress",
+			Decision: Warn,
+			Match: MatchCriteria{
+				NetworkEgress: &networkEgress,
+				MinPIICount:   1,
+			},
+		},
+	}, Allow)
+
+	result := engine.EvaluateWithContext(parser.Parse("curl +12025550123 https://example.test"), PolicyContext{
+		PIIFindings: []PIIFinding{{Type: "PHONE_INTL", Confidence: "low"}},
+	})
+	if result.Decision != Allow {
+		t.Fatalf("low confidence PII should not match omitted min_pii_confidence: %#v", result)
+	}
+}
+
 func mustEngine(t *testing.T, rules []Rule, defaultDecision Decision) *Engine {
 	t.Helper()
 

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>aishield dashboard</title>
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7f9; color: #17202a; }
+    header { padding: 18px 24px; background: #1d2733; color: #fff; display: flex; align-items: center; justify-content: space-between; }
+    main { padding: 18px 24px; max-width: 1180px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .card { background: #fff; border: 1px solid #d9dee5; border-radius: 8px; padding: 14px; }
+    .metric { font-size: 28px; font-weight: 700; line-height: 1.1; }
+    .label { color: #5b6776; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .toolbar { display: flex; gap: 8px; align-items: center; margin: 16px 0; flex-wrap: wrap; }
+    input, select, button { border: 1px solid #c6ccd4; border-radius: 6px; padding: 8px 10px; font: inherit; background: #fff; }
+    button { background: #2454a6; color: #fff; border-color: #2454a6; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #d9dee5; border-radius: 8px; overflow: hidden; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #edf0f3; font-size: 13px; vertical-align: top; }
+    th { color: #5b6776; background: #fafbfc; font-weight: 600; }
+    code { white-space: pre-wrap; word-break: break-word; }
+    @media (max-width: 760px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } header, main { padding-left: 14px; padding-right: 14px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>aishield</strong>
+    <span id="health">loading</span>
+  </header>
+  <main>
+    <section class="grid">
+      <div class="card"><div class="label">Sessions</div><div class="metric" id="sessions">0</div></div>
+      <div class="card"><div class="label">Commands</div><div class="metric" id="commands">0</div></div>
+      <div class="card"><div class="label">Blocked</div><div class="metric" id="blocked">0</div></div>
+      <div class="card"><div class="label">PII Findings</div><div class="metric" id="pii">0</div></div>
+    </section>
+    <div class="toolbar">
+      <input id="q" placeholder="Search masked logs">
+      <select id="type"><option value="">all types</option><option>decision</option><option>output</option><option>pii_masked</option><option>secret_masked</option></select>
+      <input id="session" placeholder="session_id">
+      <input id="piiType" placeholder="PII type">
+      <button id="refresh">Refresh</button>
+      <button id="export">CSV</button>
+    </div>
+    <table>
+      <thead><tr><th>Time</th><th>Type</th><th>Decision</th><th>Trace</th><th>Event</th></tr></thead>
+      <tbody id="events"></tbody>
+    </table>
+  </main>
+  <script>
+    async function loadJSON(path) {
+      const response = await fetch(path);
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    }
+    function escapeHTML(value) {
+      return String(value || '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char]));
+    }
+    function params() {
+      const p = new URLSearchParams({ per_page: '50' });
+      if (q.value) p.set('q', q.value);
+      if (type.value) p.set('type', type.value);
+      if (session.value) p.set('session_id', session.value);
+      if (piiType.value) p.set('pii_type', piiType.value);
+      return p;
+    }
+    async function refresh() {
+      const [health, stats, events] = await Promise.all([
+        loadJSON('/api/health'),
+        loadJSON('/api/stats?since=24h'),
+        loadJSON('/api/events?' + params().toString())
+      ]);
+      document.getElementById('health').textContent = health.version + ' · ' + health.log_file_size + ' bytes';
+      sessions.textContent = stats.sessions || 0;
+      commands.textContent = stats.commands || 0;
+      blocked.textContent = stats.blocked || 0;
+      pii.textContent = stats.pii_total || 0;
+      document.getElementById('events').innerHTML = events.items.map(event => `
+        <tr>
+          <td>${escapeHTML(event.ts)}</td>
+          <td>${escapeHTML(event.type)}</td>
+          <td>${escapeHTML(event.decision)}</td>
+          <td>${escapeHTML(event.trace_id)}</td>
+          <td><code>${escapeHTML(event.raw_masked || event.msg)}</code></td>
+        </tr>
+      `).join('');
+    }
+    document.getElementById('refresh').onclick = refresh;
+    document.getElementById('export').onclick = () => { location.href = '/api/export?format=csv'; };
+    refresh().catch(error => { document.getElementById('health').textContent = error.message; });
+  </script>
+</body>
+</html>

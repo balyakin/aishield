@@ -2,12 +2,15 @@ package policy
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/balyakin/aishield/internal/parser"
 	"github.com/balyakin/aishield/internal/pathmatch"
 )
+
+var hostPortRegex = regexp.MustCompile(`\b[a-z0-9.-]+:[0-9]{2,5}\b`)
 
 type Engine struct {
 	rules           []compiledRule
@@ -40,9 +43,18 @@ func NewEngine(rules []Rule, defaultDecision Decision, workDir string) (*Engine,
 }
 
 func (engine *Engine) Evaluate(command parser.ParsedCommand) EvalResult {
+	return engine.EvaluateWithContext(command, PolicyContext{})
+}
+
+func (engine *Engine) EvaluateWithContext(command parser.ParsedCommand, context PolicyContext) EvalResult {
+	if context.NetworkEgress == nil {
+		egress := IsNetworkEgress(command)
+		context.NetworkEgress = &egress
+	}
+
 	matchedRules := make([]compiledRule, 0)
 	for _, rule := range engine.rules {
-		if rule.matches(command, engine.workDir) {
+		if rule.matches(command, engine.workDir, context) {
 			matchedRules = append(matchedRules, rule)
 		}
 	}
@@ -77,6 +89,12 @@ func (engine *Engine) Evaluate(command parser.ParsedCommand) EvalResult {
 }
 
 func compileRule(rule Rule, order int) (compiledRule, error) {
+	if rule.Match.MinPIICount < 0 {
+		return compiledRule{}, fmt.Errorf("rule %q has invalid min_pii_count: must be non-negative", rule.Name)
+	}
+	if rule.Match.MinPIIConfidence != "" && confidenceRank(rule.Match.MinPIIConfidence) == 0 {
+		return compiledRule{}, fmt.Errorf("rule %q has invalid min_pii_confidence %q", rule.Name, rule.Match.MinPIIConfidence)
+	}
 	rawRegexes, err := compileRegexes(rule.Match.RawRegex, rule.Name, "raw_regex")
 	if err != nil {
 		return compiledRule{}, err
@@ -107,7 +125,7 @@ func compileRegexes(patterns []string, ruleName string, fieldName string) ([]*re
 	return regexes, nil
 }
 
-func (rule compiledRule) matches(command parser.ParsedCommand, workDir string) bool {
+func (rule compiledRule) matches(command parser.ParsedCommand, workDir string, context PolicyContext) bool {
 	criteria := rule.rule.Match
 	if len(criteria.Executables) > 0 && !matchesExecutable(command, criteria.Executables) {
 		return false
@@ -130,6 +148,14 @@ func (rule compiledRule) matches(command parser.ParsedCommand, workDir string) b
 	if len(criteria.EnvVarKeys) > 0 && !matchesEnvVars(command, criteria.EnvVarKeys) {
 		return false
 	}
+	if criteria.NetworkEgress != nil {
+		if context.NetworkEgress == nil || *context.NetworkEgress != *criteria.NetworkEgress {
+			return false
+		}
+	}
+	if hasPIICriteria(criteria) && !matchesPII(criteria, context) {
+		return false
+	}
 	return true
 }
 
@@ -140,7 +166,7 @@ func (rule compiledRule) isStrongerThan(other compiledRule) bool {
 		return ruleStrength > otherStrength
 	}
 	if rule.rule.Priority != other.rule.Priority {
-		return rule.rule.Priority < other.rule.Priority
+		return rule.rule.Priority > other.rule.Priority
 	}
 	return rule.order > other.order
 }
@@ -194,6 +220,101 @@ func matchesEnvVars(command parser.ParsedCommand, keys []string) bool {
 		}
 	}
 	return false
+}
+
+func matchesPII(criteria MatchCriteria, context PolicyContext) bool {
+	minCount := criteria.MinPIICount
+	if minCount == 0 {
+		minCount = 1
+	}
+	minConfidence := criteria.MinPIIConfidence
+	if minConfidence == "" {
+		minConfidence = "medium"
+	}
+	allowedTypes := make(map[string]bool)
+	for _, entityType := range criteria.PIITypes {
+		allowedTypes[entityType] = true
+	}
+	count := 0
+	minRank := confidenceRank(minConfidence)
+	for _, finding := range context.PIIFindings {
+		if len(allowedTypes) > 0 && !allowedTypes[finding.Type] {
+			continue
+		}
+		if confidenceRank(finding.Confidence) < minRank {
+			continue
+		}
+		count++
+		if count >= minCount {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPIICriteria(criteria MatchCriteria) bool {
+	return len(criteria.PIITypes) > 0 || criteria.MinPIICount > 0 || criteria.MinPIIConfidence != ""
+}
+
+func IsNetworkEgress(command parser.ParsedCommand) bool {
+	for _, segment := range commandSegments(command) {
+		executable := filepath.Base(segment.Executable)
+		if directNetworkExecutable(executable) {
+			return true
+		}
+		if interpreterExecutable(executable) && interpreterHasNetworkIndicator(segment.Raw, segment.Args) {
+			return true
+		}
+	}
+	return false
+}
+
+func directNetworkExecutable(executable string) bool {
+	switch executable {
+	case "curl", "wget", "nc", "ncat", "netcat", "ssh", "scp", "rsync", "aws", "gcloud", "az", "gh", "openai", "anthropic":
+		return true
+	default:
+		return false
+	}
+}
+
+func interpreterExecutable(executable string) bool {
+	switch executable {
+	case "python", "python3", "node":
+		return true
+	default:
+		return false
+	}
+}
+
+func interpreterHasNetworkIndicator(raw string, args []string) bool {
+	value := strings.ToLower(raw + " " + strings.Join(args, " "))
+	if strings.Contains(value, "http://") || strings.Contains(value, "https://") {
+		return true
+	}
+	if hostPortRegex.MatchString(value) {
+		return true
+	}
+	indicators := []string{"fetch(", "requests.", "urllib", "http.", "https.", "net.", "socket."}
+	for _, indicator := range indicators {
+		if strings.Contains(value, indicator) {
+			return true
+		}
+	}
+	return false
+}
+
+func confidenceRank(confidence string) int {
+	switch strings.ToLower(confidence) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func commandSegments(command parser.ParsedCommand) []parser.ParsedCommand {

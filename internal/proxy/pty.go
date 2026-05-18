@@ -15,6 +15,7 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/balyakin/aishield/internal/dataprotection"
 	"github.com/balyakin/aishield/internal/exitcode"
 	"github.com/balyakin/aishield/internal/fsguard"
 	"github.com/balyakin/aishield/internal/logger"
@@ -29,7 +30,7 @@ type PTYProxy struct {
 	env        []string
 	workDir    string
 	policy     *policy.Engine
-	masker     *secrets.Masker
+	protector  *dataprotection.Processor
 	fsguard    *fsguard.Guard
 	logger     *logger.Logger
 	notifier   *notifier.Notifier
@@ -39,6 +40,8 @@ type PTYProxy struct {
 	logOutput  bool
 	stats      Stats
 	statsMutex sync.Mutex
+	traceID    string
+	traceMutex sync.Mutex
 }
 
 type Stats struct {
@@ -47,6 +50,7 @@ type Stats struct {
 	Warned        int
 	Blocked       int
 	SecretsMasked int
+	PIIMasked     int
 }
 
 type Options struct {
@@ -55,6 +59,7 @@ type Options struct {
 	WorkDir    string
 	Policy     *policy.Engine
 	Masker     *secrets.Masker
+	Protector  *dataprotection.Processor
 	FSGuard    *fsguard.Guard
 	Logger     *logger.Logger
 	Notifier   *notifier.Notifier
@@ -65,12 +70,16 @@ type Options struct {
 }
 
 func New(options Options) *PTYProxy {
+	protector := options.Protector
+	if protector == nil {
+		protector = dataprotection.New(options.Masker, nil)
+	}
 	return &PTYProxy{
 		command:    options.Command,
 		env:        options.Env,
 		workDir:    options.WorkDir,
 		policy:     options.Policy,
-		masker:     options.Masker,
+		protector:  protector,
 		fsguard:    options.FSGuard,
 		logger:     options.Logger,
 		notifier:   options.Notifier,
@@ -167,6 +176,10 @@ func (proxy *PTYProxy) handleInputLine(writer io.Writer, line string, reader *bu
 	}
 
 	proxy.incrementCommands()
+	traceID := logger.NewTraceID()
+	proxy.setTraceID(traceID)
+	protectionResult := proxy.protector.ProtectString(command.Raw)
+	policyContext := policyContextFromProtection(protectionResult)
 	pathResult := proxy.fsguard.Check(command.FilePaths, fsguard.IsWriteCommand(command))
 	if !pathResult.Allowed {
 		result := policy.EvalResult{
@@ -176,17 +189,17 @@ func (proxy *PTYProxy) handleInputLine(writer io.Writer, line string, reader *bu
 			Reason:   pathResult.Reason,
 		}
 		proxy.incrementBlocked()
-		_ = proxy.logger.LogDecision("pty", command, result)
+		_ = proxy.logger.LogDecisionWithTrace("pty", command, result, traceID)
 		_ = proxy.notifyDecision(notifier.EventBlocked, command, result)
-		fmt.Fprintf(os.Stderr, "\n[aishield] BLOCKED: %s", line)
+		fmt.Fprintf(os.Stderr, "\n[aishield] BLOCKED: %s", protectionResult.Value)
 		return nil
 	}
 
-	result := proxy.policy.Evaluate(command)
+	result := proxy.policy.EvaluateWithContext(command, policyContext)
 	if proxy.dryRun {
 		result.Decision = policy.Allow
 	}
-	_ = proxy.logger.LogDecision("pty", command, result)
+	_ = proxy.logger.LogDecisionWithTrace("pty", command, result, traceID)
 
 	switch result.Decision {
 	case policy.Allow:
@@ -204,7 +217,7 @@ func (proxy *PTYProxy) handleInputLine(writer io.Writer, line string, reader *bu
 	case policy.Block:
 		proxy.incrementBlocked()
 		_ = proxy.notifyDecision(notifier.EventBlocked, command, result)
-		fmt.Fprintf(os.Stderr, "\n[aishield] BLOCKED: %sRule: %s\nReason: %s\n", line, result.Rule, result.Reason)
+		fmt.Fprintf(os.Stderr, "\n[aishield] BLOCKED: %sRule: %s\nReason: %s\n", protectionResult.Value, result.Rule, result.Reason)
 		return nil
 	default:
 		return nil
@@ -222,7 +235,7 @@ func (proxy *PTYProxy) confirm(command parser.ParsedCommand, result policy.EvalR
 	if reader == nil {
 		return false
 	}
-	fmt.Fprintf(os.Stderr, "\n[aishield] WARNING: %s", command.Raw)
+	fmt.Fprintf(os.Stderr, "\n[aishield] WARNING: %s", proxy.protector.ProtectString(command.Raw).Value)
 	fmt.Fprintf(os.Stderr, "Rule: %s\nReason: %s\nAllow? [y/N]: ", result.Rule, result.Reason)
 
 	answer := make(chan string, 1)
@@ -264,27 +277,43 @@ func writeToChild(writer io.Writer, line string) error {
 
 func (proxy *PTYProxy) copyOutput(ptmx *os.File) {
 	buffer := make([]byte, 4096)
+	stream := dataprotection.NewStreamProcessor(proxy.protector)
 	for {
 		count, err := ptmx.Read(buffer)
 		if count > 0 {
 			output := buffer[:count]
-			maskResult := proxy.masker.MaskString(string(output))
-			proxy.countSecretMasks(maskResult)
-			_, _ = os.Stdout.Write([]byte(maskResult.Value))
-			if proxy.logOutput {
-				_ = proxy.logger.Log(logger.Event{
-					Backend:   "pty",
-					Type:      "output",
-					RawMasked: maskResult.Value,
-				})
-			}
+			rawOutput := string(output)
+			proxy.writeProtectedOutput(stream.ProtectChunk(rawOutput))
 		}
 		if err != nil {
+			proxy.writeProtectedOutput(stream.Flush())
 			if err != io.EOF {
 				return
 			}
 			return
 		}
+	}
+}
+
+func (proxy *PTYProxy) writeProtectedOutput(maskResult dataprotection.Result) {
+	if maskResult.Value == "" && !maskResult.Changed {
+		return
+	}
+	proxy.countDataProtectionMasks(maskResult)
+	_, _ = os.Stdout.Write([]byte(maskResult.Value))
+	if proxy.logOutput {
+		summary := maskResult.Summary
+		_ = proxy.logger.Log(logger.Event{
+			Backend:        "pty",
+			Type:           "output",
+			TraceID:        proxy.currentTraceID(),
+			RawMasked:      maskResult.Value,
+			PIICounts:      maskResult.PIICounts,
+			PIIFindings:    maskResult.PIIFindings,
+			SecretCounts:   maskResult.SecretCounts,
+			DataProtection: &summary,
+			PreSanitized:   true,
+		})
 	}
 }
 
@@ -316,25 +345,42 @@ func killAfterTimeout(command *exec.Cmd, processDone <-chan struct{}) {
 	}
 }
 
-func (proxy *PTYProxy) countSecretMasks(maskResult secrets.MaskResult) {
+func (proxy *PTYProxy) countDataProtectionMasks(maskResult dataprotection.Result) {
 	if !maskResult.Changed {
 		return
 	}
-	totalCount := 0
-	for _, count := range maskResult.Counts {
-		totalCount = totalCount + count
-	}
+	secretTotal := totalCounts(maskResult.SecretCounts)
+	piiTotal := totalCounts(maskResult.PIICounts)
 	proxy.statsMutex.Lock()
-	proxy.stats.SecretsMasked = proxy.stats.SecretsMasked + totalCount
+	proxy.stats.SecretsMasked = proxy.stats.SecretsMasked + secretTotal
+	proxy.stats.PIIMasked = proxy.stats.PIIMasked + piiTotal
 	proxy.statsMutex.Unlock()
 
-	for name, count := range maskResult.Counts {
+	for name, count := range maskResult.SecretCounts {
 		_ = proxy.logger.Log(logger.Event{
-			Backend: "pty",
-			Type:    "secret_masked",
-			Message: fmt.Sprintf("masked %d occurrence(s) of %s in output", count, name),
+			Backend:      "pty",
+			Type:         "secret_masked",
+			TraceID:      proxy.currentTraceID(),
+			Message:      fmt.Sprintf("masked %d occurrence(s) of %s in output", count, name),
+			SecretCounts: map[string]int{name: count},
 		})
 		_ = proxy.notifySecretMasked(name, count)
+	}
+	for name, count := range maskResult.PIICounts {
+		summary := dataprotection.Summary{
+			PIITotal:             count,
+			Minimized:            true,
+			OriginalValuesLogged: false,
+		}
+		_ = proxy.logger.Log(logger.Event{
+			Backend:        "pty",
+			Type:           "pii_masked",
+			TraceID:        proxy.currentTraceID(),
+			Message:        fmt.Sprintf("masked %d occurrence(s) of %s in output", count, name),
+			PIICounts:      map[string]int{name: count},
+			DataProtection: &summary,
+		})
+		_ = proxy.notifyPIIFound(name, count)
 	}
 }
 
@@ -345,9 +391,9 @@ func (proxy *PTYProxy) notifyDecision(eventType string, command parser.ParsedCom
 	return proxy.notifier.Notify(context.Background(), notifier.Event{
 		SessionID:        proxy.logger.SessionID(),
 		EventType:        eventType,
-		Command:          command.Raw,
+		Command:          proxy.protector.ProtectString(command.Raw).Value,
 		Rule:             result.Rule,
-		Reason:           result.Reason,
+		Reason:           proxy.protector.ProtectString(result.Reason).Value,
 		Agent:            proxy.command[0],
 		Severity:         result.Severity,
 		WorkingDirectory: proxy.workDir,
@@ -365,6 +411,21 @@ func (proxy *PTYProxy) notifySecretMasked(name string, count int) error {
 		Agent:            proxy.command[0],
 		Severity:         policy.SeverityWarn,
 		WorkingDirectory: proxy.workDir,
+	})
+}
+
+func (proxy *PTYProxy) notifyPIIFound(name string, count int) error {
+	if proxy.notifier == nil {
+		return nil
+	}
+	return proxy.notifier.Notify(context.Background(), notifier.Event{
+		SessionID:        proxy.logger.SessionID(),
+		EventType:        notifier.EventPIIFound,
+		Reason:           fmt.Sprintf("masked %d occurrence(s) of %s in output", count, name),
+		Agent:            proxy.command[0],
+		Severity:         policy.SeverityWarn,
+		WorkingDirectory: proxy.workDir,
+		Count:            count,
 	})
 }
 
@@ -406,4 +467,38 @@ func (proxy *PTYProxy) incrementBlocked() {
 	proxy.statsMutex.Lock()
 	defer proxy.statsMutex.Unlock()
 	proxy.stats.Blocked++
+}
+
+func (proxy *PTYProxy) setTraceID(traceID string) {
+	proxy.traceMutex.Lock()
+	defer proxy.traceMutex.Unlock()
+	proxy.traceID = traceID
+}
+
+func (proxy *PTYProxy) currentTraceID() string {
+	proxy.traceMutex.Lock()
+	defer proxy.traceMutex.Unlock()
+	if proxy.traceID == "" {
+		proxy.traceID = logger.NewTraceID()
+	}
+	return proxy.traceID
+}
+
+func policyContextFromProtection(result dataprotection.Result) policy.PolicyContext {
+	findings := make([]policy.PIIFinding, 0, len(result.PIIFindings))
+	for _, finding := range result.PIIFindings {
+		findings = append(findings, policy.PIIFinding{
+			Type:       finding.Type,
+			Confidence: finding.Confidence,
+		})
+	}
+	return policy.PolicyContext{PIIFindings: findings}
+}
+
+func totalCounts(counts map[string]int) int {
+	total := 0
+	for _, count := range counts {
+		total += count
+	}
+	return total
 }

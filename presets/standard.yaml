@@ -33,6 +33,15 @@ rules:
     severity: warn
     match:
       executables: ["curl", "wget"]
+  - name: warn-pii-network-egress
+    description: Warn when commands include PII and send data to network tools
+    decision: warn
+    severity: warn
+    priority: 80
+    match:
+      network_egress: true
+      min_pii_count: 1
+      min_pii_confidence: medium
   - name: warn-docker-destructive
     description: Destructive Docker operation detected
     decision: warn

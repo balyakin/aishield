@@ -47,6 +47,15 @@ func TestMaskPrivateKeyHeader(t *testing.T) {
 	}
 }
 
+func TestMaskPrivateKeyBlock(t *testing.T) {
+	masker := mustMasker(t)
+	result := masker.MaskString("-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----")
+
+	if result.Value != "[MASKED:private-key]" {
+		t.Fatalf("unexpected masked value: %s", result.Value)
+	}
+}
+
 func mustMasker(t *testing.T) *Masker {
 	t.Helper()
 

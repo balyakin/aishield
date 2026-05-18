@@ -96,6 +96,18 @@ func StrictRules() []Rule {
 			},
 		},
 		{
+			Name:        "block-pii-network-egress",
+			Description: "Block commands that include PII and send data to network tools",
+			Decision:    Block,
+			Priority:    80,
+			Severity:    SeverityCritical,
+			Match: MatchCriteria{
+				NetworkEgress:    boolPtr(true),
+				MinPIICount:      1,
+				MinPIIConfidence: "medium",
+			},
+		},
+		{
 			Name:        "block-docker-destructive",
 			Description: "Destructive Docker operation detected",
 			Decision:    Block,
@@ -165,6 +177,18 @@ func StandardRules() []Rule {
 			Severity:    SeverityWarn,
 			Match: MatchCriteria{
 				Executables: []string{"curl", "wget"},
+			},
+		},
+		{
+			Name:        "warn-pii-network-egress",
+			Description: "Warn when commands include PII and send data to network tools",
+			Decision:    Warn,
+			Priority:    80,
+			Severity:    SeverityWarn,
+			Match: MatchCriteria{
+				NetworkEgress:    boolPtr(true),
+				MinPIICount:      1,
+				MinPIIConfidence: "medium",
 			},
 		},
 		{
@@ -242,6 +266,10 @@ func StandardRules() []Rule {
 			},
 		},
 	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func PermissiveRules() []Rule {

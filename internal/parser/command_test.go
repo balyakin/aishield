@@ -85,6 +85,19 @@ func TestParseEnvVars(t *testing.T) {
 	}
 }
 
+func TestParseNetworkCLIsRequiredByPolicy(t *testing.T) {
+	for _, raw := range []string{
+		"gh api repos/example",
+		"openai api responses.create",
+		"anthropic messages create",
+	} {
+		command := Parse(raw)
+		if !command.IsShell {
+			t.Fatalf("expected %q to be recognized as shell command", raw)
+		}
+	}
+}
+
 func TestParseQuotedArgs(t *testing.T) {
 	command := Parse("git commit -m 'fix: some bug'")
 

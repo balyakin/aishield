@@ -17,6 +17,7 @@ const (
 	EventBlocked      = "blocked"
 	EventWarned       = "warned"
 	EventSecretMasked = "secret_masked"
+	EventPIIFound     = "pii_found"
 )
 
 type Notifier struct {
@@ -36,6 +37,7 @@ type Event struct {
 	User             string `json:"user,omitempty"`
 	Host             string `json:"host,omitempty"`
 	WorkingDirectory string `json:"working_directory,omitempty"`
+	Count            int    `json:"count,omitempty"`
 }
 
 func New(notificationsConfig config.NotificationsConfig) *Notifier {
@@ -134,6 +136,12 @@ func shouldSend(webhookConfig config.WebhookConfig, event Event) bool {
 		return webhookConfig.OnWarned
 	case EventSecretMasked:
 		return webhookConfig.OnSecretMasked
+	case EventPIIFound:
+		minCount := webhookConfig.MinPIICount
+		if minCount == 0 {
+			minCount = 1
+		}
+		return webhookConfig.OnPIIFound && event.Count >= minCount
 	default:
 		return false
 	}

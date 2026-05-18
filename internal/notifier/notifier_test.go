@@ -86,6 +86,37 @@ func TestNotifySkipsDisabledEvents(t *testing.T) {
 	}
 }
 
+func TestNotifyPIIFoundHonorsMinCount(t *testing.T) {
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	notifier := NewWithClient(config.NotificationsConfig{
+		Enabled: true,
+		Webhook: config.WebhookConfig{
+			URL:         "https://example.test/webhook",
+			OnPIIFound:  true,
+			MinPIICount: 2,
+		},
+	}, client)
+
+	if err := notifier.Notify(context.Background(), Event{EventType: EventPIIFound, Severity: policy.SeverityWarn, Count: 1}); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if err := notifier.Notify(context.Background(), Event{EventType: EventPIIFound, Severity: policy.SeverityWarn, Count: 2}); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected exactly one PII notification, got %d", calls)
+	}
+}
+
 type roundTripFunc func(request *http.Request) (*http.Response, error)
 
 func (roundTripper roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

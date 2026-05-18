@@ -7,6 +7,7 @@ import (
 
 	"github.com/balyakin/aishield/internal/config"
 	"github.com/balyakin/aishield/internal/exitcode"
+	"github.com/balyakin/aishield/internal/logger"
 	"github.com/balyakin/aishield/internal/parser"
 	"github.com/balyakin/aishield/internal/policy"
 	"github.com/balyakin/aishield/internal/shim"
@@ -25,7 +26,7 @@ func Run(args []string) error {
 		}
 		if !evaluation.Allowed {
 			_ = shim.NotifyDeniedForShell(evaluation)
-			fmt.Fprintf(os.Stderr, "[aishield] BLOCKED: %s\n", args[1])
+			fmt.Fprintf(os.Stderr, "[aishield] BLOCKED: %s\n", shim.Masked(evaluation.Config, evaluation.Command.Raw))
 			fmt.Fprintf(os.Stderr, "Rule: %s\nReason: %s\n", evaluation.Result.Rule, evaluation.Result.Reason)
 			return exitcode.New(evaluation.Code, "")
 		}
@@ -53,8 +54,20 @@ func evaluateShellCommand(raw string) (shim.Evaluation, error) {
 	if err != nil {
 		return shim.Evaluation{}, err
 	}
+	protector, err := config.NewDataProtector(loadedConfig)
+	if err != nil {
+		return shim.Evaluation{}, err
+	}
+	protectionResult := protector.ProtectString(command.Raw)
+	policyContext := policy.PolicyContext{PIIFindings: make([]policy.PIIFinding, 0, len(protectionResult.PIIFindings))}
+	for _, finding := range protectionResult.PIIFindings {
+		policyContext.PIIFindings = append(policyContext.PIIFindings, policy.PIIFinding{
+			Type:       finding.Type,
+			Confidence: finding.Confidence,
+		})
+	}
 
-	result := engine.Evaluate(command)
+	result := engine.EvaluateWithContext(command, policyContext)
 	if os.Getenv(shim.EnvDryRun) == "true" {
 		result.Decision = policy.Allow
 	}
@@ -69,6 +82,7 @@ func evaluateShellCommand(raw string) (shim.Evaluation, error) {
 		Allowed: allowed,
 		Code:    code,
 		Config:  loadedConfig,
+		TraceID: logger.NewTraceID(),
 	}
 	_ = shim.LogEvaluation("shell", "shell", evaluation)
 	return evaluation, nil
